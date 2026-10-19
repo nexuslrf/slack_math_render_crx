@@ -4,7 +4,7 @@ A Chrome Manifest V3 extension that renders LaTeX equations in Slack Web message
 
 ## Install in Chrome
 
-The ready-to-use extension is in `dist/slack-math-viewer`.
+Download the extension ZIP from [GitHub Releases](https://github.com/nexuslrf/slack_math_render_crx/releases) when a release is available, and extract it. If using a repository checkout, the ready-to-use extension is in `dist/slack-math-viewer`.
 
 1. Open `chrome://extensions` in Chrome.
 2. Turn on **Developer mode** in the upper-right corner.
@@ -54,3 +54,9 @@ Set `CHROMIUM_PATH` to an existing Chromium executable to run tests without down
 After editing source files, run `npm run build`, click **Reload** on the extension card at `chrome://extensions`, and refresh Slack. The generated `dist/slack-math-viewer` contains everything needed for installation; `node_modules` is not needed to use it.
 
 Implementation references: [Chrome content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts) and [KaTeX rendering options](https://katex.org/docs/options). KaTeX's MIT license is bundled in `vendor/KATEX-LICENSE.txt`.
+
+## Prepare a release
+
+Keep the versions in `package.json` and `extension/manifest.json` in sync, add `docs/releases/vX.Y.Z.md`, and run `npm run build` to update the committed installable folder. Commit and push the changes, then push an annotated `vX.Y.Z` tag.
+
+The release workflow checks versions and generated files, runs all tests, and creates a **draft** GitHub release with a versioned extension ZIP and SHA-256 checksum. Review the draft on GitHub and click **Publish release** when ready. The ZIP uses fixed metadata for reproducible packaging. Rerunning the workflow can refresh an existing draft; it refuses to modify a published release.
