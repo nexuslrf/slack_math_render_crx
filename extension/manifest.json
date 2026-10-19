@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Slack Math Viewer",
+  "version": "1.0.0",
+  "description": "Render LaTeX equations in Slack messages, locally in your browser.",
+  "permissions": ["storage"],
+  "action": {
+    "default_title": "Slack Math Viewer",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [{
+    "matches": ["https://app.slack.com/*", "https://*.slack.com/*"],
+    "js": ["vendor/katex.min.js", "math-parser.js", "content.js"],
+    "css": ["vendor/katex.min.css", "content.css"],
+    "run_at": "document_idle"
+  }],
+  "web_accessible_resources": [{
+    "resources": ["vendor/fonts/*"],
+    "matches": ["https://*.slack.com/*"]
+  }],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  }
+}

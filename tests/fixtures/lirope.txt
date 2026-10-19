@@ -1,0 +1,74 @@
+好，我结合正文 Sec. 3.2 和附录 A.1、B.2、B.3，把 LiRoPE (Light-axis Rotary Position Embedding) 从“为什么要做”、“具体怎么算”、“为什么这么设计”到“作为审稿人可以挑什么刺”给你拆解清楚：
+
+---
+
+1. 核心痛点：为什么视频模型原生的 Temporal RoPE 会失效？
+在 Wan 2.2 这类视频 DiT 中，Self-Attention 里的 3D RoPE 把每个注意头（Head dim = 128 维实数，即 64 个复数对）拆成三段：
+Temporal (时间轴)：64 个实数通道（32 个复数对），编码帧序号 $i$；
+Height (高度轴)：32 个实数通道；
+Width (宽度轴)：32 个实数通道。
+标准 Temporal RoPE 的性质是：第 $i$ 帧的 Query 和第 $j$ 帧的 Key 做完旋转后，内积只依赖*帧序号之差 $(i - j)$*。
+但在 OLAT 任务里，每一帧不是“时间上的一刻”，而是*球面 $S^2$ 上的一个光源方向 $\mathbf{d}_i \in \mathbb{R}^3$（$\|\mathbf{d}_i\|=1$）*：
+球面是二维流形，不管你怎么把 331 个光源排成一维序列（比如螺旋线或随机游走），同样的帧间距 $|i - j|$ 对应的真实球面夹角 $\theta_{ij}$ 一直在变；
+反过来，球面上相邻的两个光源，在一维序列里的下标可能差得很远。
+结果就是：模型没法通过 $(i - j)$ 学会“哪些帧的光源方向相近、应该强耦合共享高光/阴影过渡”，导致训练 Loss 很快就卡住（Fig. 7 & Fig. 10）。
+---
+
+2. LiRoPE 具体是怎么算的？（核心机制）
+作者受相机控制工作 ReRoPE (Li et al., 2026) 的启发，*不改网络结构、不加可学习参数*，直接把 Temporal RoPE 64 个实数通道里的*最后 16 个实数通道*替换成“相对光源方向变换”。
+
+第一步：为什么是 16 个通道？（对齐 $4\times$ 时间 VAE）
+Wan 2.1 的 Video VAE 在时间维有 $4\times$ 压缩：输入 $F$ 张图像（比如 333 张），会被压缩成 $F' = 1 + (F-1)/4 = 84$ 个 Latent 帧。
+也就是说，除了第 0 个 Latent 帧对应第 0 张图外，后面每个 Latent 帧 $k$ 打包了 4 张連続的 OLAT 图像（对应 4 个光源方向）。
+为了把每个 Latent 帧包含的 4 个光源方向都塞进位置编码，每个光源方向 $\mathbf{d} \in \mathbb{R}^3$ 用一个 4 维齐次坐标表示，4 个光源正好占 $4 \times 4 = 16$ 个实数通道！（注：第 0 个 Latent 帧只有 1 张图，就把第 0 个光源方向重复 4 次填满 16 通道）。
+第二步：怎么让 Query-Key 内积出现“相对光源位移” $\mathbf{d}_i - \mathbf{d}_j$？
+对于任意一个单位光源方向 $\mathbf{d} \in S^2 \subset \mathbb{R}^3$，作者定义了一个 $4 \times 4$ 的*齐次平移矩阵*（Eq. 2）：
+$$
+L(\mathbf{d}) = \begin{bmatrix} I_3 & \beta \mathbf{d} \\ \mathbf{0}^\top & 1 \end{bmatrix}
+$$
+其中 $\beta = 0.5$ 是固定缩放常数。这个矩阵的逆非常简洁，就是反向平移：
+$$
+L(\mathbf{d})^{-1} = \begin{bmatrix} I_3 & -\beta \mathbf{d} \\ \mathbf{0}^\top & 1 \end{bmatrix}
+$$
+在 Self-Attention 计算第 $i$ 帧和第 $j$ 帧的注意力 logit 时，把这 16 个通道分成 4 组，每组是一个 4 维行向量 $\mathbf{q}_i, \mathbf{k}_j \in \mathbb{R}^{1\times 4}$：
+对 Query 右乘 $L(\mathbf{d}i)$：$\tilde{\mathbf{q}}i = \mathbf{q}i L(\mathbf{d}i)$
+对 Key 右乘 $L(\mathbf{d}j)^{-\top}$：$\tilde{\mathbf{k}}j = \mathbf{k}j L(\mathbf{d}j)^{-\top}$
+那么它们在 Attention 里的内积 $\tilde{\mathbf{q}}_i \tilde{\mathbf{k}}_j^\top$ 就变成了（Eq. 10）：
+$$
+\tilde{\mathbf{q}}_i \tilde{\mathbf{k}}_j^\top = \mathbf{q}_i \underbrace{L(\mathbf{d}_i) L(\mathbf{d}_j)^{-1}}_{\text{相对变换矩阵}} \mathbf{k}_j^\top = \mathbf{q}_i \begin{bmatrix} I_3 & \beta (\mathbf{d}_i - \mathbf{d}_j) \\ \mathbf{0}^\top & 1 \end{bmatrix} \mathbf{k}_j^\top
+$$
+如果把 4 维向量写成前 3 维和第 4 维 $\mathbf{q}_i = [\mathbf{q}_i^{(1:3)}, q_i^{(4)}]$，展开这个内积就是：
+$$
+\tilde{\mathbf{q}}_i \tilde{\mathbf{k}}_j^\top = \underbrace{\mathbf{q}_i^{(1:3)} (\mathbf{k}_j^{(1:3)})^\top + q_i^{(4)} k_j^{(4)}}_{\text{原始点积}} + \beta \, k_j^{(4)} \, \mathbf{q}_i^{(1:3)} (\mathbf{d}_i - \mathbf{d}_j)
+$$
+*直观含义*：
+当两个光源方向完全相同时（$\mathbf{d}i = \mathbf{d}j$），中间矩阵退化为单位阵 $I_4$，就是普通点积；
+当两个光源方向不同时，注意力分数里直接多出了一项与三维空间弦向量差 $\beta(\mathbf{d}_i - \mathbf{d}_j)$ 成线性的偏置项！而且因为 $\|\mathbf{d}i - \mathbf{d}j\| = 2 \sin(\theta{ij}/2)$ 与球面测地线夹角 $\theta{ij}$ 严格单调对应，网络就能直接感知两个光源隔了多远、朝哪个方向偏。
+---
+
+3. 附录 B.3 的理论亮点：为什么不用球面角 $(\theta, \phi)$ 或 $SO(3)$ 旋转矩阵？
+作者在附录 B.3 专门讨论了“为什么在 $S^2$ 上必须借用 $\mathbb{R}^3$ 平移群，而不能用看似更自然的旋转或角度”——这段写得很有数学功底：
+为什么不用球坐标角度差 $(\Delta \theta, \Delta \phi)$ 套标准 RoPE？
+因为球坐标有极点奇异性（赤道上 $\Delta \phi$ 跨度很大，极点附近 $\Delta \phi$ 几乎没有弧长）。相同的 $(\Delta \theta, \Delta \phi)$ 在球面不同位置代表完全不同的真实夹角，破坏了平移不变性。
+为什么不用 $SO(3)$ 三维旋转矩阵 $R(\mathbf{d}_i) R(\mathbf{d}_j)^\top$？
+拓扑障碍（毛球定理 Hairy-Ball Theorem）：要把球面上的一个点 $\mathbf{d} \in S^2$ 提升为一个三维旋转矩阵 $R(\mathbf{d}) \in SO(3)$（满足 $R(\mathbf{d})\mathbf{e}_3 = \mathbf{d}$），还需要在切平面上连续地选一个朝向（绕 $\mathbf{d}$ 轴的自转角）。但毛球定理证明了 $S^2$ 上不存在处处非零的连续切向量场！所以任何 $S^2 \to SO(3)$ 的映射必然存在不连续的奇异点（Gauge artifacts）。
+代数障碍（非阿贝尔群）：只有 $S^0, S^1, S^3$ 有李群结构，$S^2$ 本身不是群。而 $SO(3)$ 是非交换群，给全局坐标系加一个旋转 $Q$，$R(Q\mathbf{d}i)R(Q\mathbf{d}j)^\top = Q R(\mathbf{d}i)R(\mathbf{d}j)^\top Q^\top$ 会发生共轭变化，无法像阿贝尔群那样直接抵消成只依赖相对差的形式。
+
+结论：把 $S^2$ 嵌入 $\mathbb{R}^3$，借用阿贝尔平移群 $(\mathbb{R}^3, +)$ 构造齐次矩阵 $L(\mathbf{d})$，是既连续、无奇异点、又能通过矩阵求逆严格抵消出相对位移 $\mathbf{d}i - \mathbf{d}j$ 的最简方案。
+---
+
+4. 作为 Reviewer，LiRoPE 有哪些值得追问的细节？（可用于 Questions / Weaknesses）
+虽然 LiRoPE 的故事和推导很漂亮，但细看它的实现（App. A.1 & B.2），有 3 个非常深刻的技术细节问题 可以写进审稿意见：
+为什么保留了前 48 个通道的原始 Temporal RoPE？（Unrepurposed Temporal Channels）
+Temporal RoPE 一共有 64 个实数通道，LiRoPE 只替换了最后 16 个通道（最低频段），而前 48 个通道仍然保留了原始的帧序号 Temporal RoPE！
+这意味着注意力实际上同时看到了“帧序号差 $(i-j)$”（前 48 通道）和“光照位移 $(\mathbf{d}i - \mathbf{d}j)$”（后 16 通道）。这正好解释了为什么作者在训练时必须用球面 Delaunay 图上的前向随机游走（让相邻帧的光源也相近），以及为什么当 $F=81$ 模型外推到 $F=333$ 时性能会下降（Fig. 5）：因为前 48 个未替换的 Temporal RoPE 通道依然受限于训练帧长 $[0, 81]$！如果把全部 64 个时间通道都替换成多尺度的 $\beta_k L(\mathbf{d})$，会不会就能实现真正的顺序无关（permutation-invariant）和零样本长度外推？
+
+齐次变换 $L(\mathbf{d})$ 不是正交矩阵（Norm Growth / Dynamic Range）：
+标准 RoPE 是正交旋转（保模长 $\|\tilde{\mathbf{q}}\| = \|\mathbf{q}\|$），而 $L(\mathbf{d})$ 是剪切/平移矩阵（非正交），会改变 Query/Key 向量的范数，且内积项 $\beta kj^{(4)} \mathbf{q}i^{(1:3)}(\mathbf{d}i - \mathbf{d}j)$ 对 Query 和 Key 是不对称的（只用到了 $\mathbf{q}i$ 的前 3 维和 $\mathbf{k}j$ 的第 4 维）。作者是如何选定 $\beta=0.5$ 的？有没有对比过对称化设计？
+
+VAE $4\times$ 打包下的帧内顺序耦合：
+每个 Latent 帧的第 1~4 个 4-vector 槽位分别对应压缩进去的 4 张连续 OLAT 图，因此在计算 Latent 帧 $m$ 和 Latent 帧 $n$ 的注意力时，第 1 个槽位只跟第 1 个槽位算位移 $\mathbf{d}{4m-3} - \mathbf{d}{4n-3}$，而不是 4 个光源两两交互。这也意味着推理时的光源排列顺序（校准螺旋线）必须保持局部平滑。
+
+---
+
+这样拆解下来，你对 LiRoPE 的机制和它能衍生出的审稿问题是不是就很清晰了？接下来你想再看哪个部分（比如 HDR 编码、实验对比、或者某个附录），还是我们开始构思 review 的框架？

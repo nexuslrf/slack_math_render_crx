@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Slack Math Viewer</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header><span class="mark" aria-hidden="true">∑</span><div><h1>Slack Math Viewer</h1><p>Readable equations. Right in Slack.</p></div></header>
+  <label class="setting"><span>Render math in messages</span><input id="enabled" type="checkbox" role="switch" checked disabled></label>
+  <p id="status" role="status">Loading settings…</p>
+  <div class="examples"><span>Inline</span><code>$x^2$</code><code>\(x^2\)</code><span>Display</span><code>$$…$$</code><code>\[…\]</code></div>
+  <p class="hint">Use <strong>Show original</strong> beneath a rendered message to see or copy its source. Code blocks stay as code.</p>
+  <footer>Runs locally · No message data is sent anywhere</footer>
+  <script src="popup.js"></script>
+</body>
+</html>

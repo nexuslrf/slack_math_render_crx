@@ -1,0 +1,32 @@
+/* Only hide source elements owned by the renderer. */
+.smv-source-hidden { display: none !important; }
+.smv-view { min-width: 0; max-width: 100%; color: inherit; }
+.smv-view [hidden] { display: none !important; }
+.smv-view .smv-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.smv-view .smv-equation { white-space: normal; }
+.smv-view .smv-equation.smv-display {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+  margin: 8px 0;
+}
+.smv-view .katex { font-size: 1.08em; color: inherit; }
+.smv-view .katex-display { margin: 0; text-align: left; }
+.smv-view .katex-display > .katex { text-align: left; }
+.smv-view .smv-source-toggle {
+  display: block;
+  width: fit-content;
+  margin: 6px 0 2px;
+  padding: 2px 6px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  opacity: .6;
+  font: 11px/1.5 system-ui, sans-serif;
+  cursor: pointer;
+}
+.smv-view .smv-source-toggle:hover,
+.smv-view .smv-source-toggle:focus-visible { opacity: 1; }
